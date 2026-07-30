@@ -123,8 +123,16 @@ div[data-testid="stDataFrame"] { border: 1px solid rgba(198,161,91,0.2); }
 
 ## ---------------------------------------------------------------
 ## Load model, lookup table and (optionally) the raw data for charts
+##
+## model.pkl is the tuned Random Forest selected in Iteration 1 of the
+## notebook. model_columns.pkl holds the exact training column order,
+## which the input row must be reindexed to before predicting.
 ## ---------------------------------------------------------------
-model = joblib.load("kc_best_gbt_model.pkl")
+MODEL_MAE = 68933      ## mean absolute error on the held-out test set
+MODEL_R2 = 0.886       ## R-squared on the held-out test set
+
+model = joblib.load("model.pkl")
+model_columns = joblib.load("model_columns.pkl")
 zip_lookup = pd.read_csv("zipcode_lookup.csv")
 zipcodes = sorted(zip_lookup['zipcode'].tolist())
 
@@ -175,8 +183,9 @@ def style_axes(ax):
 ## SIDEBAR - property inputs
 ## ---------------------------------------------------------------
 st.sidebar.markdown("### Location")
+default_zip_index = zipcodes.index(98103) if 98103 in zipcodes else 0
 zipcode_selected = st.sidebar.selectbox(
-    "Zipcode", zipcodes, index=zipcodes.index(98103),
+    "Zipcode", zipcodes, index=default_zip_index,
     help="Neighbourhood is one of the strongest drivers of price in King County."
 )
 waterfront_selected = st.sidebar.checkbox("Waterfront property")
@@ -217,7 +226,7 @@ st.markdown(
 )
 st.title("King County Valuations")
 st.markdown(
-    "<p style='color:#8FA4BD;max-width:60ch;'>A gradient boosting model trained on "
+    "<p style='color:#8FA4BD;max-width:60ch;'>A random forest model trained on "
     "21,000 recorded sales across King County, Washington. Enter the property details "
     "on the left to generate an estimated market value.</p>",
     unsafe_allow_html=True
@@ -240,6 +249,9 @@ if predict_clicked:
         zip_row = zip_lookup[zip_lookup['zipcode'] == zipcode_selected].iloc[0]
 
         sqft_above = sqft_living_selected - sqft_basement_selected
+
+        ## 2015 is the most recent yr_built in the dataset, matching the
+        ## house_age definition used during training.
         house_age = 2015 - yr_built_selected
         is_renovated = 1 if yr_renovated_selected > 0 else 0
 
@@ -256,12 +268,14 @@ if predict_clicked:
             'house_age': [house_age], 'is_renovated': [is_renovated]
         })
 
-        ## Encoding must mirror the training pipeline exactly
+        ## Encoding must mirror the training pipeline exactly. Reindexing to
+        ## model_columns drops the reference zipcode (removed by drop_first
+        ## during training) and fills any absent dummy with 0.
         df_input = pd.get_dummies(df_input, columns=['zipcode'])
-        df_input = df_input.reindex(columns=model.feature_names_in_, fill_value=0)
+        df_input = df_input.reindex(columns=model_columns, fill_value=0)
 
         price = model.predict(df_input)[0]
-        margin = 68554  ## mean absolute error on the held-out test set
+        margin = MODEL_MAE
 
         ## Headline valuation
         st.markdown(f"""
@@ -296,11 +310,11 @@ if predict_clicked:
         })
 
         ## ---------------- market context charts ----------------
-        if market is not None:
+        local = market[market['zipcode'] == zipcode_selected] if market is not None else None
+
+        if local is not None and len(local) > 0:
             st.markdown("### Market context")
             g1, g2 = st.columns(2)
-
-            local = market[market['zipcode'] == zipcode_selected]
 
             ## 1. where this valuation sits in the local price distribution
             with g1:
@@ -315,6 +329,7 @@ if predict_clicked:
                 style_axes(ax)
                 plt.tight_layout()
                 st.pyplot(fig, transparent=True)
+                plt.close(fig)
                 pct = (local['price'] < price).mean() * 100
                 st.caption(f"This valuation sits above {pct:.0f}% of recorded sales in {zipcode_selected}.")
 
@@ -336,6 +351,7 @@ if predict_clicked:
                 style_axes(ax)
                 plt.tight_layout()
                 st.pyplot(fig, transparent=True)
+                plt.close(fig)
 
                 comps = local[
                     local['sqft_living'].between(sqft_living_selected*0.9, sqft_living_selected*1.1)
@@ -383,9 +399,9 @@ elif not predict_clicked:
 st.markdown(
     "<hr style='border-color:rgba(198,161,91,0.2);margin-top:2.5rem;'>"
     "<p style='color:#6C82A0;font-size:0.78rem;max-width:75ch;'>"
-    "Model: gradient boosting regressor, R² 0.90 on held-out data, mean absolute error "
-    "$68,554. Estimates are most reliable for realistic input combinations — bedroom "
-    "count and living area normally increase together. This is a guide price, not a "
-    "formal valuation.</p>",
+    f"Model: random forest regressor, R² {MODEL_R2:.3f} on held-out data, mean absolute "
+    f"error ${MODEL_MAE:,}. Estimates are most reliable for realistic input combinations "
+    "— bedroom count and living area normally increase together. This is a guide price, "
+    "not a formal valuation.</p>",
     unsafe_allow_html=True
 )
