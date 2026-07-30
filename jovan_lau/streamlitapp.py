@@ -4,10 +4,12 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+from pathlib import Path
 
-## ---------------------------------------------------------------
-## Page configuration
-## ---------------------------------------------------------------
+
+BASE_DIR = Path(__file__).parent
+
+
 st.set_page_config(
     page_title="Kingsmen | King County Valuations",
     page_icon="◆",
@@ -15,11 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-## ---------------------------------------------------------------
-## Custom styling: dark navy theme with a brass accent.
-## Streamlit's default chrome is hidden so the page looks like a
-## standalone product rather than a Streamlit demo.
-## ---------------------------------------------------------------
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@300;400;500;600&display=swap');
@@ -121,37 +119,29 @@ div[data-testid="stDataFrame"] { border: 1px solid rgba(198,161,91,0.2); }
 </style>
 """, unsafe_allow_html=True)
 
-## ---------------------------------------------------------------
-## Load model, lookup table and (optionally) the raw data for charts
-##
-## model.pkl is the tuned Random Forest selected in Iteration 1 of the
-## notebook. model_columns.pkl holds the exact training column order,
-## which the input row must be reindexed to before predicting.
-## ---------------------------------------------------------------
-MODEL_MAE = 68933      ## mean absolute error on the held-out test set
-MODEL_R2 = 0.886       ## R-squared on the held-out test set
 
-model = joblib.load("model.pkl")
-model_columns = joblib.load("model_columns.pkl")
-zip_lookup = pd.read_csv("zipcode_lookup.csv")
+MODEL_MAE = 68933      
+MODEL_R2 = 0.886       
+
+model = joblib.load(BASE_DIR / "model.pkl")
+model_columns = joblib.load(BASE_DIR / "model_columns.pkl")
+zip_lookup = pd.read_csv(BASE_DIR / "zipcode_lookup.csv")
 zipcodes = sorted(zip_lookup['zipcode'].tolist())
 
 @st.cache_data
 def load_market_data():
     """Load the raw sales data used for the market comparison charts."""
     try:
-        return pd.read_csv("kc_house_data.csv")
+        return pd.read_csv(BASE_DIR / "kc_house_data.csv")
     except FileNotFoundError:
         return None
 
 market = load_market_data()
 
-## Session state stores every valuation run this session so the user can export them
 if "history" not in st.session_state:
     st.session_state.history = []
 
-## Matplotlib styling to match the dark theme.
-## Set globally so every text element inherits light colours.
+
 NAVY, BRASS, MIST = "#0C2038", "#C6A15B", "#8FA4BD"
 plt.rcParams.update({
     "text.color":        "#E8EEF6",
@@ -179,9 +169,7 @@ def style_axes(ax):
     ax.yaxis.label.set_color(MIST)
     ax.title.set_color("#E8EEF6")
 
-## ---------------------------------------------------------------
-## SIDEBAR - property inputs
-## ---------------------------------------------------------------
+
 st.sidebar.markdown("### Location")
 default_zip_index = zipcodes.index(98103) if 98103 in zipcodes else 0
 zipcode_selected = st.sidebar.selectbox(
@@ -216,9 +204,7 @@ yr_renovated_selected = st.sidebar.number_input("Year renovated", 0, 2015, 0,
 
 predict_clicked = st.sidebar.button("Value this property", use_container_width=True)
 
-## ---------------------------------------------------------------
-## HEADER
-## ---------------------------------------------------------------
+
 st.markdown(
     "<div style='font-size:0.7rem;letter-spacing:0.28em;text-transform:uppercase;"
     "color:#C6A15B;margin-bottom:0.2rem;'>Kingsmen Property Analytics</div>",
@@ -232,9 +218,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-## ---------------------------------------------------------------
-## PREDICTION
-## ---------------------------------------------------------------
+
 if predict_clicked:
 
     if sqft_basement_selected >= sqft_living_selected:
@@ -244,14 +228,12 @@ if predict_clicked:
         st.error(f"Renovation year cannot be earlier than the year built ({yr_built_selected}).")
 
     else:
-        ## Features the user cannot reasonably know are taken from the
-        ## median values for the selected zipcode.
+
         zip_row = zip_lookup[zip_lookup['zipcode'] == zipcode_selected].iloc[0]
 
         sqft_above = sqft_living_selected - sqft_basement_selected
 
-        ## 2015 is the most recent yr_built in the dataset, matching the
-        ## house_age definition used during training.
+
         house_age = 2015 - yr_built_selected
         is_renovated = 1 if yr_renovated_selected > 0 else 0
 
@@ -268,16 +250,13 @@ if predict_clicked:
             'house_age': [house_age], 'is_renovated': [is_renovated]
         })
 
-        ## Encoding must mirror the training pipeline exactly. Reindexing to
-        ## model_columns drops the reference zipcode (removed by drop_first
-        ## during training) and fills any absent dummy with 0.
+
         df_input = pd.get_dummies(df_input, columns=['zipcode'])
         df_input = df_input.reindex(columns=model_columns, fill_value=0)
 
         price = model.predict(df_input)[0]
         margin = MODEL_MAE
 
-        ## Headline valuation
         st.markdown(f"""
         <div class="valuation">
             <div class="label">Estimated market value</div>
@@ -287,7 +266,6 @@ if predict_clicked:
         </div>
         """, unsafe_allow_html=True)
 
-        ## Supporting figures
         s1, s2, s3, s4 = st.columns(4)
         for col, k, v in [
             (s1, "Price per sqft", f"${price/sqft_living_selected:,.0f}"),
@@ -298,7 +276,6 @@ if predict_clicked:
             col.markdown(f"<div class='stat'><div class='k'>{k}</div><div class='v'>{v}</div></div>",
                          unsafe_allow_html=True)
 
-        ## Record this valuation for export
         st.session_state.history.append({
             "zipcode": zipcode_selected, "bedrooms": bedrooms_selected,
             "bathrooms": bathrooms_selected, "sqft_living": sqft_living_selected,
@@ -309,14 +286,12 @@ if predict_clicked:
             "view": view_selected, "predicted_price": round(price, 2)
         })
 
-        ## ---------------- market context charts ----------------
         local = market[market['zipcode'] == zipcode_selected] if market is not None else None
 
         if local is not None and len(local) > 0:
             st.markdown("### Market context")
             g1, g2 = st.columns(2)
 
-            ## 1. where this valuation sits in the local price distribution
             with g1:
                 fig, ax = plt.subplots(figsize=(5, 3.1))
                 ax.hist(local['price'], bins=35, color="#274866", edgecolor="none")
@@ -333,7 +308,6 @@ if predict_clicked:
                 pct = (local['price'] < price).mean() * 100
                 st.caption(f"This valuation sits above {pct:.0f}% of recorded sales in {zipcode_selected}.")
 
-            ## 2. size against price, with this property marked
             with g2:
                 fig, ax = plt.subplots(figsize=(5, 3.1))
                 ax.scatter(local['sqft_living'], local['price'], s=8,
@@ -362,9 +336,7 @@ if predict_clicked:
                         f"median ${comps['price'].median():,.0f}."
                     )
 
-## ---------------------------------------------------------------
-## SESSION HISTORY AND EXPORT
-## ---------------------------------------------------------------
+
 if st.session_state.history:
     st.markdown("### Valuation log")
     hist_df = pd.DataFrame(st.session_state.history)
@@ -393,9 +365,7 @@ elif not predict_clicked:
         "</div>", unsafe_allow_html=True
     )
 
-## ---------------------------------------------------------------
-## FOOTNOTE
-## ---------------------------------------------------------------
+
 st.markdown(
     "<hr style='border-color:rgba(198,161,91,0.2);margin-top:2.5rem;'>"
     "<p style='color:#6C82A0;font-size:0.78rem;max-width:75ch;'>"
